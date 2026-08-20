@@ -1,0 +1,27 @@
+{
+  "name": "pi-context-steering",
+  "version": "0.1.0",
+  "description": "Steers the main pi session with a user message when context usage crosses thresholds (default 70/80/90%).",
+  "type": "module",
+  "main": "index.ts",
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "keywords": [
+    "pi",
+    "pi-package",
+    "context",
+    "steering",
+    "compaction"
+  ],
+  "license": "MIT"
+}

@@ -1,4 +1,18 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import ext from "../index.ts";
+
+// Temp cwds with a project settings file controlling auto-compaction.
+// Project overrides global, so these are independent of the real ~/.pi/agent/settings.json.
+function makeCwd(autoCompact) {
+	const dir = mkdtempSync(join(tmpdir(), "pcs-"));
+	mkdirSync(join(dir, ".pi"));
+	writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ compaction: { enabled: autoCompact } }));
+	return dir;
+}
+const cwdOff = makeCwd(false);
+const cwdOn = makeCwd(true);
 
 let failures = 0;
 function check(name, cond) {
@@ -29,7 +43,7 @@ function makePi() {
 	};
 }
 
-function ctx(percent, { idle = false, tokens, noWindow = false, messages, systemPrompt, throwBuild = false } = {}) {
+function ctx(percent, { idle = false, tokens, noWindow = false, messages, systemPrompt, throwBuild = false, cwd = cwdOff } = {}) {
 	const usage =
 		percent == null
 			? { tokens: null, contextWindow: 131072, percent: null }
@@ -37,6 +51,7 @@ function ctx(percent, { idle = false, tokens, noWindow = false, messages, system
 	if (tokens !== undefined) usage.tokens = tokens;
 	if (noWindow) delete usage.contextWindow;
 	return {
+		cwd,
 		isIdle: () => idle,
 		getContextUsage: () => usage,
 		getSystemPrompt: () => systemPrompt ?? "You are a coding assistant.",
@@ -132,6 +147,29 @@ const compactEvent = (reason = "threshold", tokensBefore = 120000, extra = {}) =
 	const { pi } = makePi();
 	ext(pi);
 	check("unset env uses defaults (handlers registered)", true);
+}
+
+// --- Auto-compaction ON: short message (no tiered urgency) ---
+{
+	const { pi, sent, fire } = makePi();
+	ext(pi);
+	await fire("message_end", ...assistantEnd(70.2, { cwd: cwdOn }));
+	check("auto-compact on: short message at 70", sent.length === 1 && sent[0].text === `Context is at ~70% of the limit (${Math.round(0.702 * 131072)} / 131072 tokens).`);
+	check("auto-compact on: no tiered urgency", !sent[0].text.includes("Prioritize finishing"));
+
+	await fire("message_end", ...assistantEnd(90.5, { cwd: cwdOn }));
+	check("auto-compact on: short message at 90", sent.length === 2 && sent[1].text.includes("~91%"));
+	check("auto-compact on: no 'nearly exhausted'", !sent[1].text.includes("nearly exhausted"));
+}
+
+// --- Auto-compaction OFF: full tiered message (explicit) ---
+{
+	const { pi, sent, fire } = makePi();
+	ext(pi);
+	await fire("message_end", ...assistantEnd(70.2, { cwd: cwdOff }));
+	check("auto-compact off: full message at 70", sent.length === 1 && sent[0].text.includes("Prioritize finishing"));
+	await fire("message_end", ...assistantEnd(90.5, { cwd: cwdOff }));
+	check("auto-compact off: 'nearly exhausted' at 90", sent.length === 2 && sent[1].text.includes("nearly exhausted"));
 }
 
 // --- S1: two-stage happy path ---
@@ -269,6 +307,31 @@ const compactEvent = (reason = "threshold", tokensBefore = 120000, extra = {}) =
 	await fire("session_compact", compactEvent("overflow", 130000), ctx(20));
 	await fire("session_compact", compactEvent("overflow", 125000), ctx(20));
 	check("consecutive compactions: two stage-1 messages", sent.length === 2);
+}
+
+// --- Estimate counts content only (toolResult.details excluded) ---
+{
+	const bigDetails = "x".repeat(40000); // structured payload, never sent to LLM
+	const messages = [
+		{ role: "compactionSummary", summary: "s".repeat(400) }, // 100 tokens
+		{
+			role: "toolResult",
+			toolCallId: "t1",
+			toolName: "read",
+			content: [{ type: "text", text: "ok" }], // 1 token
+			details: { fileContents: bigDetails },
+			isError: false,
+			timestamp: Date.now(),
+		},
+		{ role: "assistant", content: [{ type: "text", text: "t".repeat(400) }], usage: { input: 1, output: 1 }, timestamp: Date.now() }, // 100 tokens
+	];
+	const { pi, sent, fire } = makePi();
+	ext(pi);
+	await fire("session_compact", compactEvent("threshold", 120000), ctx(20, { messages, systemPrompt: "p".repeat(400) })); // 100 tokens
+	check("estimate: one stage-1 message", sent.length === 1);
+	// 100 + 1 + 100 + 100 = 301 — details (40k chars) must NOT inflate this
+	check("estimate: content-only (details excluded)", sent[0].text.includes("approximately 301 tokens"));
+	check("estimate: percent matches content-only", sent[0].text.includes("~0% of the 131072 limit"));
 }
 
 // --- tokensBefore missing / 0 → Variant A (no number) ---

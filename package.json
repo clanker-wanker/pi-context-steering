@@ -1,6 +1,6 @@
 {
   "name": "pi-context-steering",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Steers the main pi session with a user message when context usage crosses thresholds (default 70/80/90%).",
   "type": "module",
   "main": "index.ts",
@@ -10,6 +10,9 @@
   ],
   "scripts": {
     "test": "node --test"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.4"
   },
   "pi": {
     "extensions": [

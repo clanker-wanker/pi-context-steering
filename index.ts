@@ -33,7 +33,16 @@
  *         post-compaction notification independently.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { statSync } from "node:fs";
+import { join } from "node:path";
+import {
+	estimateTokens,
+	getAgentDir,
+	SettingsManager,
+	type ExtensionAPI,
+	type ExtensionContext,
+	type SessionContext,
+} from "@earendil-works/pi-coding-agent";
 
 const DEFAULT_THRESHOLDS = [70, 80, 90];
 
@@ -56,8 +65,36 @@ function parsePostCompact(): boolean {
 	return t !== "" && t !== "off" && t !== "0";
 }
 
-function getSteeringText(threshold: number, pct: number, tokens: number | null, contextWindow: number): string {
+const autoCompactCache = new Map<string, { mtime: number; value: boolean }>();
+
+/** Auto-compaction flag, refreshed only when a settings file actually changes. */
+function isAutoCompactionEnabled(cwd: string): boolean {
+	const paths = [join(getAgentDir(), "settings.json"), join(cwd, ".pi", "settings.json")];
+	let mtime = 0;
+	for (const p of paths) {
+		try {
+			mtime = Math.max(mtime, statSync(p).mtimeMs);
+		} catch {
+			/* missing file */
+		}
+	}
+	const cached = autoCompactCache.get(cwd);
+	if (cached && cached.mtime === mtime) return cached.value;
+	let value = true; // pi default
+	try {
+		value = SettingsManager.create(cwd).getCompactionEnabled();
+	} catch {
+		/* keep default */
+	}
+	autoCompactCache.set(cwd, { mtime, value });
+	return value;
+}
+
+function getSteeringText(threshold: number, pct: number, tokens: number | null, contextWindow: number, cwd: string): string {
 	const abs = tokens != null ? ` (${tokens} / ${contextWindow} tokens)` : "";
+	if (isAutoCompactionEnabled(cwd)) {
+		return `Context is at ~${pct}% of the limit${abs}.`;
+	}
 	if (threshold >= 90) {
 		return (
 			`Context is at ~${pct}% of the limit${abs} — nearly exhausted. ` +
@@ -75,19 +112,15 @@ function estimatePostCompactTokens(ctx: ExtensionContext): {
 	percent: number | null;
 	contextWindow: number | null;
 } | null {
-	// Inline chars/4 — NO import of estimateTokens (pi package not resolvable in tests).
 	// buildSessionContext().messages is the EXACT post-compaction list
 	// [compactionSummary, ...keptMessages], rebuilt before session_compact emits.
-	let messages: unknown[];
+	let messages: SessionContext["messages"];
 	try {
 		messages = ctx.sessionManager.buildSessionContext().messages;
 	} catch {
 		return null; // estimate unavailable → Variant B fallback
 	}
-	const messagesTokens = messages.reduce(
-		(s, m) => s + Math.ceil(JSON.stringify(m).length / 4),
-		0
-	);
+	const messagesTokens = messages.reduce((s, m) => s + estimateTokens(m), 0);
 	const systemPromptTokens = Math.ceil(ctx.getSystemPrompt().length / 4);
 	const estimatedInput = messagesTokens + systemPromptTokens;
 	const contextWindow = ctx.getContextUsage()?.contextWindow ?? null;
@@ -172,7 +205,7 @@ export default function (pi: ExtensionAPI) {
 
 		const threshold = Math.max(...crossed);
 		crossed.forEach((c) => fired.add(c));
-		send(getSteeringText(threshold, Math.round(usage.percent), usage.tokens, usage.contextWindow), ctx);
+		send(getSteeringText(threshold, Math.round(usage.percent), usage.tokens, usage.contextWindow, ctx.cwd), ctx);
 	});
 
 	pi.on("session_compact", (event, ctx) => {

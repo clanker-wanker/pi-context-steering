@@ -50,6 +50,7 @@ On every assistant `message_end`, the extension reads `ctx.getContextUsage()`. W
 
 - While streaming, delivery uses `pi.sendUserMessage(text, { deliverAs: "steer" })`, queued until the current turn's tool calls finish and delivered before the next LLM call; when idle, it's a plain send.
 - Each threshold fires once per compaction cycle; thresholds re-arm on `session_compact`.
+- When auto-compaction is on, the top threshold is anchored 4 points below the compaction point (`contextWindow - reserveTokens`), so the final warning always lands pre-compaction; configured thresholds at or above the anchored top are dropped as unreachable.
 - The warning appears in the transcript as a user message, so you see exactly what the agent is being told.
 
 The wording depends on whether pi's auto-compaction is enabled (read from your settings, default on):
@@ -92,7 +93,7 @@ Delivery matches the threshold feature: plain send when idle (manual `/compact`)
 
 ## Notes
 
-- Built-in auto-compaction fires at `contextWindow - reserveTokens` (default reserve 16384), i.e. ~87.5% of a 131k window, after the 80% warning, before the 90% warning.
+- Built-in auto-compaction fires at `contextWindow - reserveTokens` (default reserve 16384), i.e. ~87.5% of a 131k window. With auto-compaction on, the top threshold is anchored 4 points below that point so the final warning lands pre-compaction (e.g. ~83.5% on a 131k window, ~75% on a 77k window).
 - Right after compaction, `getContextUsage()` reports `null` until the next assistant response; the extension simply skips those events and re-arms on `session_compact`. Stage 2 of the post-compaction notification waits for the first non-null reading; if none comes (session ends), it is simply not sent.
 
 ## License

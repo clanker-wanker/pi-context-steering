@@ -12,6 +12,9 @@
  *    - Fires at most one steer per event, at the highest crossed threshold.
  *    - Each threshold fires once per compaction cycle; re-arms on
  *      `session_compact`.
+ *    - When auto-compaction is on, the top threshold is anchored a few
+ *      points below the compaction point (contextWindow - reserveTokens),
+ *      so the final warning lands pre-compaction.
  *
  * 2. Post-compaction notification — after `session_compact`, sends a
  *    two-stage steering user message:
@@ -65,10 +68,8 @@ function parsePostCompact(): boolean {
 	return t !== "" && t !== "off" && t !== "0";
 }
 
-const autoCompactCache = new Map<string, { mtime: number; value: boolean }>();
-
-/** Auto-compaction flag, refreshed only when a settings file actually changes. */
-function isAutoCompactionEnabled(cwd: string): boolean {
+/** Max mtime of the global + project settings files (0 if neither exists). */
+function settingsMtime(cwd: string): number {
 	const paths = [join(getAgentDir(), "settings.json"), join(cwd, ".pi", "settings.json")];
 	let mtime = 0;
 	for (const p of paths) {
@@ -78,6 +79,14 @@ function isAutoCompactionEnabled(cwd: string): boolean {
 			/* missing file */
 		}
 	}
+	return mtime;
+}
+
+const autoCompactCache = new Map<string, { mtime: number; value: boolean }>();
+
+/** Auto-compaction flag, refreshed only when a settings file actually changes. */
+function isAutoCompactionEnabled(cwd: string): boolean {
+	const mtime = settingsMtime(cwd);
 	const cached = autoCompactCache.get(cwd);
 	if (cached && cached.mtime === mtime) return cached.value;
 	let value = true; // pi default
@@ -88,6 +97,44 @@ function isAutoCompactionEnabled(cwd: string): boolean {
 	}
 	autoCompactCache.set(cwd, { mtime, value });
 	return value;
+}
+
+const reserveCache = new Map<string, { mtime: number; value: number }>();
+
+/** Compaction reserve (tokens), refreshed only when a settings file changes. */
+function getCompactionReserveTokens(cwd: string): number {
+	const mtime = settingsMtime(cwd);
+	const cached = reserveCache.get(cwd);
+	if (cached && cached.mtime === mtime) return cached.value;
+	let value = 16384; // pi default
+	try {
+		value = SettingsManager.create(cwd).getCompactionReserveTokens();
+	} catch {
+		/* keep default */
+	}
+	reserveCache.set(cwd, { mtime, value });
+	return value;
+}
+
+/** Percentage points the top threshold is anchored below the compaction point. */
+const ANCHOR_MARGIN = 4;
+
+/**
+ * Effective thresholds: when auto-compaction is on, the top threshold is
+ * anchored to a few points below the compaction point (contextWindow -
+ * reserveTokens), so the final warning always lands pre-compaction. Any
+ * configured threshold at or above the anchored top is dropped (unreachable
+ * before compaction). When auto-compaction is off, thresholds are unchanged.
+ */
+function effectiveThresholds(thresholds: number[], contextWindow: number, cwd: string): number[] {
+	if (!isAutoCompactionEnabled(cwd) || !Number.isFinite(contextWindow) || contextWindow <= 0) return thresholds;
+	const reserve = getCompactionReserveTokens(cwd);
+	const compactionPct = ((contextWindow - reserve) / contextWindow) * 100;
+	const sorted = [...thresholds].sort((a, b) => a - b);
+	const top = sorted[sorted.length - 1];
+	const anchoredTop = Math.min(top, compactionPct - ANCHOR_MARGIN);
+	const rest = sorted.slice(0, -1).filter((t) => t < anchoredTop);
+	return [...rest, anchoredTop].sort((a, b) => a - b);
 }
 
 function getSteeringText(threshold: number, pct: number, tokens: number | null, contextWindow: number, cwd: string): string {
@@ -200,7 +247,8 @@ export default function (pi: ExtensionAPI) {
 		const usage = ctx.getContextUsage();
 		if (!usage || usage.percent == null) return;
 
-		const crossed = thresholds.filter((t) => usage.percent! >= t && !fired.has(t));
+		const effThresholds = effectiveThresholds(thresholds, usage.contextWindow, ctx.cwd);
+		const crossed = effThresholds.filter((t) => usage.percent! >= t && !fired.has(t));
 		if (crossed.length === 0) return;
 
 		const threshold = Math.max(...crossed);

@@ -43,11 +43,11 @@ function makePi() {
 	};
 }
 
-function ctx(percent, { idle = false, tokens, noWindow = false, messages, systemPrompt, throwBuild = false, cwd = cwdOff } = {}) {
+function ctx(percent, { idle = false, tokens, noWindow = false, messages, systemPrompt, throwBuild = false, cwd = cwdOff, window = 131072 } = {}) {
 	const usage =
 		percent == null
-			? { tokens: null, contextWindow: 131072, percent: null }
-			: { tokens: Math.round((percent / 100) * 131072), contextWindow: 131072, percent };
+			? { tokens: null, contextWindow: window, percent: null }
+			: { tokens: Math.round((percent / 100) * window), contextWindow: window, percent };
 	if (tokens !== undefined) usage.tokens = tokens;
 	if (noWindow) delete usage.contextWindow;
 	return {
@@ -170,6 +170,54 @@ const compactEvent = (reason = "threshold", tokensBefore = 120000, extra = {}) =
 	check("auto-compact off: full message at 70", sent.length === 1 && sent[0].text.includes("Prioritize finishing"));
 	await fire("message_end", ...assistantEnd(90.5, { cwd: cwdOff }));
 	check("auto-compact off: 'nearly exhausted' at 90", sent.length === 2 && sent[1].text.includes("nearly exhausted"));
+}
+
+// --- Anchored thresholds: auto-compact on, small window (77824) ---
+{
+	const { pi, sent, fire } = makePi();
+	ext(pi);
+	// compaction at (77824-16384)/77824 = 78.95%; top anchored to 74.95%
+	await fire("message_end", ...assistantEnd(70, { cwd: cwdOn, window: 77824 }));
+	check("anchor: fires at 70", sent.length === 1 && sent[0].text.includes("~70%"));
+	await fire("message_end", ...assistantEnd(75, { cwd: cwdOn, window: 77824 }));
+	check("anchor: fires at anchored top (~75%)", sent.length === 2 && sent[1].text.includes("~75%"));
+	await fire("message_end", ...assistantEnd(80, { cwd: cwdOn, window: 77824 }));
+	check("anchor: no fire at 80 (dropped, above compaction)", sent.length === 2);
+}
+
+// --- Anchored thresholds: auto-compact on, large window (131072) ---
+{
+	const { pi, sent, fire } = makePi();
+	ext(pi);
+	// compaction at 87.5%; top anchored to 83.5%
+	await fire("message_end", ...assistantEnd(70, { cwd: cwdOn, window: 131072 }));
+	check("anchor-large: fires at 70", sent.length === 1);
+	await fire("message_end", ...assistantEnd(80, { cwd: cwdOn, window: 131072 }));
+	check("anchor-large: fires at 80", sent.length === 2);
+	await fire("message_end", ...assistantEnd(84, { cwd: cwdOn, window: 131072 }));
+	check("anchor-large: fires at anchored top (~84%)", sent.length === 3 && sent[2].text.includes("~84%"));
+	await fire("message_end", ...assistantEnd(90, { cwd: cwdOn, window: 131072 }));
+	check("anchor-large: no fire at 90 (dropped)", sent.length === 3);
+}
+
+// --- Anchored thresholds: already below compaction → unchanged ---
+{
+	process.env.PI_CONTEXT_STEER = "50,60,70";
+	const { pi, sent, fire } = makePi();
+	ext(pi);
+	// compaction at 78.95%; top (70) already below → unchanged
+	await fire("message_end", ...assistantEnd(70, { cwd: cwdOn, window: 77824 }));
+	check("anchor-unchanged: fires at 70 (top kept)", sent.length === 1 && sent[0].text.includes("~70%"));
+	delete process.env.PI_CONTEXT_STEER;
+}
+
+// --- No anchoring when auto-compact off ---
+{
+	const { pi, sent, fire } = makePi();
+	ext(pi);
+	// auto-compact off → 80 threshold kept (would be dropped if on)
+	await fire("message_end", ...assistantEnd(80, { cwd: cwdOff, window: 77824 }));
+	check("no-anchor-off: fires at 80 (kept when off)", sent.length === 1 && sent[0].text.includes("~80%"));
 }
 
 // --- S1: two-stage happy path ---

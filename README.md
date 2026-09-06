@@ -28,6 +28,8 @@ pi-context-steering closes that gap by injecting plain user messages the agent c
 
 ## Install
 
+### Option 1: pi install
+
 ```bash
 pi install git:github.com/clanker-wanker/pi-context-steering
 ```

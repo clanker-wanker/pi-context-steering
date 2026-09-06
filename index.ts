@@ -82,38 +82,42 @@ function settingsMtime(cwd: string): number {
 	return mtime;
 }
 
+/**
+ * Read a settings value, caching it per-cwd and refreshing only when a
+ * settings file actually changes (mtime bump). Falls back to `fallback`
+ * when the read throws.
+ */
+function cachedSetting<T>(
+	cache: Map<string, { mtime: number; value: T }>,
+	cwd: string,
+	fallback: T,
+	read: () => T
+): T {
+	const mtime = settingsMtime(cwd);
+	const cached = cache.get(cwd);
+	if (cached && cached.mtime === mtime) return cached.value;
+	let value = fallback;
+	try {
+		value = read();
+	} catch {
+		/* keep fallback */
+	}
+	cache.set(cwd, { mtime, value });
+	return value;
+}
+
 const autoCompactCache = new Map<string, { mtime: number; value: boolean }>();
 
 /** Auto-compaction flag, refreshed only when a settings file actually changes. */
 function isAutoCompactionEnabled(cwd: string): boolean {
-	const mtime = settingsMtime(cwd);
-	const cached = autoCompactCache.get(cwd);
-	if (cached && cached.mtime === mtime) return cached.value;
-	let value = true; // pi default
-	try {
-		value = SettingsManager.create(cwd).getCompactionEnabled();
-	} catch {
-		/* keep default */
-	}
-	autoCompactCache.set(cwd, { mtime, value });
-	return value;
+	return cachedSetting(autoCompactCache, cwd, true, () => SettingsManager.create(cwd).getCompactionEnabled());
 }
 
 const reserveCache = new Map<string, { mtime: number; value: number }>();
 
 /** Compaction reserve (tokens), refreshed only when a settings file changes. */
 function getCompactionReserveTokens(cwd: string): number {
-	const mtime = settingsMtime(cwd);
-	const cached = reserveCache.get(cwd);
-	if (cached && cached.mtime === mtime) return cached.value;
-	let value = 16384; // pi default
-	try {
-		value = SettingsManager.create(cwd).getCompactionReserveTokens();
-	} catch {
-		/* keep default */
-	}
-	reserveCache.set(cwd, { mtime, value });
-	return value;
+	return cachedSetting(reserveCache, cwd, 16384, () => SettingsManager.create(cwd).getCompactionReserveTokens());
 }
 
 /** Percentage points the top threshold is anchored below the compaction point. */
@@ -154,18 +158,23 @@ function getSteeringText(threshold: number, pct: number, tokens: number | null, 
 	return `Context is at ~${pct}% of the limit${abs}. Prioritize finishing the current step; avoid starting new work.`;
 }
 
-function estimatePostCompactTokens(ctx: ExtensionContext): {
+type PostCompactEstimate = {
 	estimatedInput: number;
 	percent: number | null;
 	contextWindow: number | null;
-} | null {
+};
+
+function estimatePostCompactUsage(ctx: ExtensionContext): PostCompactEstimate | null {
 	// buildSessionContext().messages is the EXACT post-compaction list
 	// [compactionSummary, ...keptMessages], rebuilt before session_compact emits.
 	let messages: SessionContext["messages"];
 	try {
-		messages = ctx.sessionManager.buildSessionContext().messages;
+		// The runtime session manager exposes buildSessionContext(); the readonly
+		// extension type (ReadonlySessionManager) does not declare it, hence the cast.
+		const sm = ctx.sessionManager as unknown as { buildSessionContext(): SessionContext };
+		messages = sm.buildSessionContext().messages;
 	} catch {
-		return null; // estimate unavailable → Variant B fallback
+		return null; // estimate unavailable → fallback without a new number
 	}
 	const messagesTokens = messages.reduce((s, m) => s + estimateTokens(m), 0);
 	const systemPromptTokens = Math.ceil(ctx.getSystemPrompt().length / 4);
@@ -178,7 +187,7 @@ function estimatePostCompactTokens(ctx: ExtensionContext): {
 function getPostCompactText(
 	reason: "manual" | "threshold" | "overflow",
 	tokensBefore: number | null,
-	estimate: { estimatedInput: number; percent: number | null; contextWindow: number | null } | null
+	estimate: PostCompactEstimate | null
 ): string {
 	const hasTokens = tokensBefore != null && Number.isFinite(tokensBefore) && tokensBefore > 0;
 	const summarized = hasTokens
@@ -186,7 +195,7 @@ function getPostCompactText(
 		: "The earlier conversation was summarized; the most recent messages were kept. ";
 
 	if (estimate) {
-		// Variant C (recommended): reason + tokensBefore + estimated usage
+		// Full estimate: reason + tokensBefore + estimated usage
 		const pct =
 			estimate.percent != null && estimate.contextWindow != null
 				? ` (~${estimate.percent}% of the ${estimate.contextWindow} limit)`
@@ -198,14 +207,14 @@ function getPostCompactText(
 		);
 	}
 	if (hasTokens) {
-		// Variant B (fallback): reason + tokensBefore, no new number
+		// Fallback: reason + tokensBefore, no new number
 		return (
 			`Your context was just compacted (reason: ${reason}). ~${tokensBefore} tokens of earlier ` +
 			"conversation were summarized to free up space; the earlier conversation is now a summary in your context, " +
 			"and your context is well below the limit again. Continue from where you left off."
 		);
 	}
-	// Variant A (fallback): no numbers
+	// Fallback: no numbers
 	return (
 		"Your context was just compacted. The earlier conversation has been summarized to free up space " +
 		"and is now a summary in your context; your context is well below the limit again. " +
@@ -237,7 +246,7 @@ export default function (pi: ExtensionAPI) {
 				const pct = usage.contextWindow
 					? ` (~${Math.round((usage.tokens / usage.contextWindow) * 100)}% of the ${usage.contextWindow} limit)`
 					: "";
-				send(`Context is now ${usage.tokens} tokens${pct}.`, ctx); // Variant D
+				send(`Context is now ${usage.tokens} tokens${pct}.`, ctx); // stage-2 follow-up
 				pendingPostCompactReport = false;
 			}
 			// tokens still null → keep the flag; retry on the next message_end
@@ -259,7 +268,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_compact", (event, ctx) => {
 		fired.clear(); // re-arm thresholds
 		if (postCompact) {
-			const estimate = estimatePostCompactTokens(ctx); // null → Variant B fallback
+			const estimate = estimatePostCompactUsage(ctx); // null → fallback without a new number
 			send(
 				getPostCompactText(
 					event.reason,

@@ -39,6 +39,7 @@
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import {
+	buildSessionContext,
 	estimateTokens,
 	getAgentDir,
 	SettingsManager,
@@ -169,10 +170,7 @@ function estimatePostCompactUsage(ctx: ExtensionContext): PostCompactEstimate | 
 	// [compactionSummary, ...keptMessages], rebuilt before session_compact emits.
 	let messages: SessionContext["messages"];
 	try {
-		// The runtime session manager exposes buildSessionContext(); the readonly
-		// extension type (ReadonlySessionManager) does not declare it, hence the cast.
-		const sm = ctx.sessionManager as unknown as { buildSessionContext(): SessionContext };
-		messages = sm.buildSessionContext().messages;
+		messages = buildSessionContext(ctx.sessionManager.getEntries(), ctx.sessionManager.getLeafId()).messages;
 	} catch {
 		return null; // estimate unavailable → fallback without a new number
 	}

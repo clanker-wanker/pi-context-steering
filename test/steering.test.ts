@@ -50,16 +50,25 @@ function ctx(percent, { idle = false, tokens, noWindow = false, messages, system
 			: { tokens: Math.round((percent / 100) * window), contextWindow: window, percent };
 	if (tokens !== undefined) usage.tokens = tokens;
 	if (noWindow) delete usage.contextWindow;
+	const msgs = messages ?? [{ role: "user", content: "hello" }, { role: "assistant", content: "hi" }];
+	const entries = msgs.map((m, i) => ({
+		type: "message",
+		id: `e${i}`,
+		parentId: i === 0 ? null : `e${i - 1}`,
+		timestamp: new Date().toISOString(),
+		message: m,
+	}));
 	return {
 		cwd,
 		isIdle: () => idle,
 		getContextUsage: () => usage,
 		getSystemPrompt: () => systemPrompt ?? "You are a coding assistant.",
 		sessionManager: {
-			buildSessionContext: () => {
+			getEntries: () => {
 				if (throwBuild) throw new Error("build failed");
-				return { messages: messages ?? [{ role: "user", content: "hello" }, { role: "assistant", content: "hi" }] };
+				return entries;
 			},
+			getLeafId: () => (entries.length ? entries[entries.length - 1].id : null),
 		},
 	};
 }
@@ -271,14 +280,14 @@ const compactEvent = (reason = "threshold", tokensBefore = 120000, extra = {}) =
 	check("S4 threshold steer also fires", sent.length === 3 && sent[2].text.includes("~85%"));
 }
 
-// --- S5: stage-1 fallback — buildSessionContext throws → Variant B ---
+// --- S5: stage-1 fallback — buildSessionContext throws → tokens-only fallback ---
 {
 	const { pi, sent, fire } = makePi();
 	ext(pi);
 	await fire("session_compact", compactEvent("threshold", 120000), ctx(20, { throwBuild: true }));
-	check("S5 Variant B: one message", sent.length === 1);
-	check("S5 Variant B: has tokensBefore", sent[0].text.includes("120000"));
-	check("S5 Variant B: no estimated number", !sent[0].text.includes("approximately"));
+	check("S5 tokens-only fallback: one message", sent.length === 1);
+	check("S5 tokens-only fallback: has tokensBefore", sent[0].text.includes("120000"));
+	check("S5 tokens-only fallback: no estimated number", !sent[0].text.includes("approximately"));
 }
 
 // --- S6: no contextWindow → stage-1 omits percent clause ---
@@ -382,7 +391,7 @@ const compactEvent = (reason = "threshold", tokensBefore = 120000, extra = {}) =
 	check("estimate: percent matches content-only", sent[0].text.includes("~0% of the 131072 limit"));
 }
 
-// --- tokensBefore missing / 0 → Variant A (no number) ---
+// --- tokensBefore missing / 0 → no-data fallback (no number) ---
 {
 	const { pi, sent, fire } = makePi();
 	ext(pi);
@@ -393,7 +402,7 @@ const compactEvent = (reason = "threshold", tokensBefore = 120000, extra = {}) =
 	const { pi: pi2, sent: sent2, fire: fire2 } = makePi();
 	ext(pi2);
 	await fire2("session_compact", { type: "session_compact", reason: "manual", willRetry: false, fromExtension: false }, ctx(20, { idle: true }));
-	check("missing compactionEntry: Variant A + plain send", sent2.length === 1 && sent2[0].options === undefined && !sent2[0].text.includes("tokens of earlier"));
+	check("missing compactionEntry: no-data fallback + plain send", sent2.length === 1 && sent2[0].options === undefined && !sent2[0].text.includes("tokens of earlier"));
 }
 
 console.log(failures === 0 ? "\nALL TESTS PASSED" : `\n${failures} FAILURES`);

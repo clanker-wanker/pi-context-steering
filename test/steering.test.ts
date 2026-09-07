@@ -168,7 +168,7 @@ const compactEvent = (reason = "threshold", tokensBefore = 120000, extra = {}) =
 	ext(pi);
 	console.error = origError;
 	await fire("message_end", ...assistantEnd(60));
-	check("invalid tokens: warning reports dropped count", warnings.length === 1 && warnings[0].includes("2 invalid PI_CONTEXT_STEER token(s)"));
+	check("invalid tokens: warning reports dropped count", warnings.length === 1 && warnings[0].includes("2 invalid PI_CONTEXT_STEER value(s)"));
 	check("invalid tokens: valid token still applied", sent.length === 1 && sent[0].text.includes("~60%"));
 	delete process.env.PI_CONTEXT_STEER;
 }

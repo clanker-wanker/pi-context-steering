@@ -65,7 +65,8 @@ function parseThresholds(): number[] {
 		else dropped.push(t);
 	}
 	if (dropped.length > 0) {
-		console.error(`pi-context-steering: ignoring invalid PI_CONTEXT_STEER tokens: ${dropped.join(", ")}`);
+		// Log the count, not the raw tokens — avoid echoing env var values to stderr.
+		console.error(`pi-context-steering: ignoring ${dropped.length} invalid PI_CONTEXT_STEER token(s); check PI_CONTEXT_STEER`);
 	}
 	return [...new Set(values)].sort((a, b) => a - b);
 }

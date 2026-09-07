@@ -91,7 +91,7 @@ Delivery matches the threshold feature: plain send when idle (manual `/compact`)
 - **Steer delivery** — `deliverAs: "steer"` while streaming, plain send when idle
 - **KV-cache friendly** — user messages only; no system prompt or history modification
 - **Independent toggles** — each feature can be disabled separately via env vars
-- **Tested** — `test/steering.test.mjs` covers threshold firing, re-arming, delivery modes, both post-compact stages, and the fallback variants
+- **Tested** — `test/steering.test.ts` covers threshold firing, re-arming, delivery modes, both post-compact stages, and the fallback variants
 
 ## Notes
 

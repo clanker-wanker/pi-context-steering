@@ -11,6 +11,9 @@
   "scripts": {
     "test": "node --test"
   },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.84.0"
+  },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.4"
   },

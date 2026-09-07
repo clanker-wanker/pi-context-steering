@@ -234,7 +234,7 @@ export default function (pi: ExtensionAPI) {
 	if (thresholds.length === 0 && !postCompact) return; // both off → no handlers
 
 	const fired = new Set<number>();
-	let pendingPostCompactReport = false; // stage-2 follow-up pending
+	let pendingPostCompactFollowUp = false; // stage-2 follow-up pending
 
 	function send(text: string, ctx: ExtensionContext) {
 		if (ctx.isIdle()) {
@@ -246,14 +246,14 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("message_end", (event, ctx) => {
 		// Stage 2: post-compaction actual-usage follow-up (independent of thresholds)
-		if (postCompact && pendingPostCompactReport) {
+		if (postCompact && pendingPostCompactFollowUp) {
 			const usage = ctx.getContextUsage();
 			if (usage?.tokens != null) {
 				const pct = usage.contextWindow
 					? ` (~${Math.round((usage.tokens / usage.contextWindow) * 100)}% of the ${usage.contextWindow} limit)`
 					: "";
 				send(`Context is now ${usage.tokens} tokens${pct}.`, ctx); // stage-2 follow-up
-				pendingPostCompactReport = false;
+				pendingPostCompactFollowUp = false;
 			}
 			// tokens still null → keep the flag; retry on the next message_end
 		}
@@ -283,7 +283,7 @@ export default function (pi: ExtensionAPI) {
 				),
 				ctx
 			);
-			pendingPostCompactReport = true; // arm stage-2 follow-up
+			pendingPostCompactFollowUp = true; // arm stage-2 follow-up
 		}
 	});
 }

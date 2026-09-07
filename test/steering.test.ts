@@ -158,6 +158,21 @@ const compactEvent = (reason = "threshold", tokensBefore = 120000, extra = {}) =
 	check("unset env uses defaults (handlers registered)", true);
 }
 
+// --- Scenario: invalid PI_CONTEXT_STEER tokens warn on stderr ---
+{
+	process.env.PI_CONTEXT_STEER = "50,abc,150";
+	const warnings = [];
+	const origError = console.error;
+	console.error = (...args) => warnings.push(args.join(" "));
+	const { pi, sent, fire } = makePi();
+	ext(pi);
+	console.error = origError;
+	await fire("message_end", ...assistantEnd(60));
+	check("invalid tokens: warning lists dropped tokens", warnings.length === 1 && warnings[0].includes("abc") && warnings[0].includes("150"));
+	check("invalid tokens: valid token still applied", sent.length === 1 && sent[0].text.includes("~60%"));
+	delete process.env.PI_CONTEXT_STEER;
+}
+
 // --- Auto-compaction ON: short message (no tiered urgency) ---
 {
 	const { pi, sent, fire } = makePi();

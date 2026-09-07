@@ -55,10 +55,18 @@ function parseThresholds(): number[] {
 	if (raw === undefined) return DEFAULT_THRESHOLDS;
 	const trimmed = raw.trim().toLowerCase();
 	if (trimmed === "" || trimmed === "off" || trimmed === "0") return [];
-	const values = trimmed
-		.split(",")
-		.map((s) => Number(s.trim()))
-		.filter((n) => Number.isFinite(n) && n > 0 && n <= 100);
+	const dropped: string[] = [];
+	const values: number[] = [];
+	for (const token of trimmed.split(",")) {
+		const t = token.trim();
+		if (t === "") continue; // tolerate empty segments (e.g. trailing comma)
+		const n = Number(t);
+		if (Number.isFinite(n) && n > 0 && n <= 100) values.push(n);
+		else dropped.push(t);
+	}
+	if (dropped.length > 0) {
+		console.error(`pi-context-steering: ignoring invalid PI_CONTEXT_STEER tokens: ${dropped.join(", ")}`);
+	}
 	return [...new Set(values)].sort((a, b) => a - b);
 }
 

@@ -70,7 +70,7 @@ function parseThresholds(): number[] {
 	return [...new Set(values)].sort((a, b) => a - b);
 }
 
-function parsePostCompact(): boolean {
+function isPostCompactEnabled(): boolean {
 	const raw = process.env.PI_CONTEXT_STEER_POST_COMPACT;
 	if (raw === undefined) return true; // default on
 	const t = raw.trim().toLowerCase();
@@ -230,7 +230,7 @@ function getPostCompactText(
 
 export default function (pi: ExtensionAPI) {
 	const thresholds = parseThresholds();
-	const postCompact = parsePostCompact();
+	const postCompact = isPostCompactEnabled();
 	if (thresholds.length === 0 && !postCompact) return; // both off → no handlers
 
 	const fired = new Set<number>();

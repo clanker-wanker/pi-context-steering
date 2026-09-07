@@ -192,8 +192,10 @@ const compactEvent = (reason = "threshold", tokensBefore = 120000, extra = {}) =
 	ext(pi);
 	await fire("message_end", ...assistantEnd(70.2, { cwd: cwdOff }));
 	check("auto-compact off: full message at 70", sent.length === 1 && sent[0].text.includes("Prioritize finishing"));
+	await fire("message_end", ...assistantEnd(80.1, { cwd: cwdOff }));
+	check("auto-compact off: 'Stop starting new work' at 80", sent.length === 2 && sent[1].text.includes("Stop starting new work"));
 	await fire("message_end", ...assistantEnd(90.5, { cwd: cwdOff }));
-	check("auto-compact off: 'nearly exhausted' at 90", sent.length === 2 && sent[1].text.includes("nearly exhausted"));
+	check("auto-compact off: 'nearly exhausted' at 90", sent.length === 3 && sent[2].text.includes("nearly exhausted"));
 }
 
 // --- Anchored thresholds: auto-compact on, small window (77824) ---
